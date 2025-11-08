@@ -1,7 +1,6 @@
 package log
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path"
@@ -172,8 +171,8 @@ func (l *Log) Read(off uint64) (*api.Record, error) {
 	}
 
 	// 該当するセグメントが見つからない場合、エラーを返す
-	if s == nil {
-		return nil, fmt.Errorf("offset out of range: %d", off)
+	if s == nil || s.nextOffset <= off {
+		return nil, api.ErrOffsetOutOfRange{Offset: off}
 	}
 
 	// セグメントからレコードを読み取る
