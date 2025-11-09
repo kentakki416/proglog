@@ -7,10 +7,12 @@ import (
 	"testing"
 
 	api "github.com/kentakki416/proglog/api/v1"
+	"github.com/kentakki416/proglog/internal/config"
 	"github.com/kentakki416/proglog/internal/log"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
@@ -59,12 +61,44 @@ func setupTest(t *testing.T, fn func(*Config)) (
 	t.Helper()
 
 	// ランダムなポートで TCP リスナーを作成（":0" で自動割り当て）
-	l, err := net.Listen("tcp", ":0")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
-	// gRPC クライアント接続を作成（テスト用なので insecure な認証情報を使用）
-	cc, err := grpc.NewClient(l.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// TLS証明書が存在するかチェック
+	_, caErr := os.Stat(config.CAFile)
+	_, certErr := os.Stat(config.ServerCertFile)
+	_, keyErr := os.Stat(config.ServerKeyFile)
+
+	var clientCreds credentials.TransportCredentials
+	var serverCreds credentials.TransportCredentials
+
+	// 証明書が存在する場合、TLSを使用
+	if caErr == nil && certErr == nil && keyErr == nil {
+		clientTLSConfig, err := config.SetupTLSConfig(config.TLSConfig{
+			CAFile: config.CAFile,
+		})
+		require.NoError(t, err)
+		clientCreds = credentials.NewTLS(clientTLSConfig)
+
+		serverTLSConfig, err := config.SetupTLSConfig(config.TLSConfig{
+			CertFile:      config.ServerCertFile,
+			KeyFile:       config.ServerKeyFile,
+			CAFile:        config.CAFile,
+			ServerAddress: l.Addr().String(),
+		})
+		require.NoError(t, err)
+		serverCreds = credentials.NewTLS(serverTLSConfig)
+	} else {
+		// 証明書が存在しない場合、テスト用に insecure な認証情報を使用
+		clientCreds = insecure.NewCredentials()
+		serverCreds = insecure.NewCredentials()
+	}
+
+	cc, err := grpc.NewClient(l.Addr().String(), grpc.WithTransportCredentials(clientCreds))
 	require.NoError(t, err)
+
+	// gRPC クライアントを作成
+	client = api.NewLogClient(cc)
 
 	// テスト用の一時ディレクトリを作成（テスト終了時に削除される）
 	dir, err := os.MkdirTemp("", "server-test")
@@ -84,16 +118,13 @@ func setupTest(t *testing.T, fn func(*Config)) (
 	}
 
 	// gRPC サーバーを作成
-	server, err := NewGRPCServer(cfg)
+	server, err := NewGRPCServer(cfg, grpc.Creds(serverCreds))
 	require.NoError(t, err)
 
 	// バックグラウンドで gRPC サーバーを起動
 	go func() {
 		server.Serve(l)
 	}()
-
-	// gRPC クライアントを作成
-	client = api.NewLogClient(cc)
 
 	// クリーンアップ関数を返す（defer で呼び出される）
 	return client, cfg, func() {

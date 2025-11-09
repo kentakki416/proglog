@@ -40,9 +40,9 @@ type grpcServer struct {
 // 戻り値:
 //   - *grpc.Server: 初期化された gRPC サーバー
 //   - error: エラーが発生した場合
-func NewGRPCServer(config *Config) (*grpc.Server, error) {
+func NewGRPCServer(config *Config, grpcOpts ...grpc.ServerOption) (*grpc.Server, error) {
 	// 新しい gRPC サーバーインスタンスを作成
-	gsrv := grpc.NewServer()
+	gsrv := grpc.NewServer(grpcOpts...)
 
 	// grpcServer の実装を作成
 	srv, err := newgrpcServer(config)
